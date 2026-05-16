@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || "/api";
+const API_BASE = import.meta.env.VITE_API_URL || "https://job-portal-project-nep0.onrender.com";
 
 async function request(path, body) {
   const response = await fetch(`${API_BASE}${path}`, {
