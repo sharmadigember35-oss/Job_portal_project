@@ -23,8 +23,8 @@ app.use(
     methods: ["GET", "POST"],
   })
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 app.post("/register", async (req, res) => {
   const email = req.body.username;
@@ -50,9 +50,10 @@ app.post("/register", async (req, res) => {
       });
     }
 
-    await db.query("INSERT INTO users (email, password) VALUES ($1, $2)", [
+    await db.query("INSERT INTO users (email, password, role) VALUES ($1, $2, $3)", [
       email,
       password,
+      "user", // Default role
     ]);
 
     return res.status(201).json({
@@ -102,7 +103,7 @@ app.post("/login", async (req, res) => {
     return res.json({
       success: true,
       message: "Login successful.",
-      user: { id: user.id, email: user.email },
+      user: { id: user.id, email: user.email, role: user.role },
     });
   } catch (err) {
     console.error(err);
@@ -110,6 +111,38 @@ app.post("/login", async (req, res) => {
       success: false,
       message: "Server error during login.",
     });
+  }
+});
+
+// GET all jobs
+app.get("/jobs", async (req, res) => {
+  try {
+    const result = await db.query(
+      "SELECT jobs.*, users.email as author_email FROM jobs JOIN users ON jobs.user_id = users.id ORDER BY jobs.created_at DESC"
+    );
+    res.json({ success: true, jobs: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error fetching jobs" });
+  }
+});
+
+// POST a new job
+app.post("/jobs", async (req, res) => {
+  const { title, description, image_data, user_id } = req.body;
+  if (!title || !description || !user_id) {
+    return res.status(400).json({ success: false, message: "Title, description, and user ID are required" });
+  }
+
+  try {
+    await db.query(
+      "INSERT INTO jobs (title, description, image_data, user_id) VALUES ($1, $2, $3, $4)",
+      [title, description, image_data, user_id]
+    );
+    res.status(201).json({ success: true, message: "Job posted successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error posting job" });
   }
 });
 

@@ -19,6 +19,7 @@ function LoginPage() {
 
     try {
       const data = await loginUser(form.username, form.password);
+      localStorage.setItem("user", JSON.stringify(data.user));
       alert(data.message);
       navigate("/");
     } catch (err) {
