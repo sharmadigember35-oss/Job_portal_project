@@ -50,10 +50,14 @@ app.post("/register", async (req, res) => {
       });
     }
 
+    // Determine role based on email domain safely
+    const emailString = String(email || "");
+    const role = emailString.endsWith("@admin.com") ? "admin" : "user";
+
     await db.query("INSERT INTO users (email, password, role) VALUES ($1, $2, $3)", [
       email,
       password,
-      "user", // Default role
+      role, 
     ]);
 
     return res.status(201).json({
@@ -143,6 +147,31 @@ app.post("/jobs", async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: "Error posting job" });
+  }
+});
+
+// POST to apply for a job
+app.post("/apply", async (req, res) => {
+  const { job_id, user_id } = req.body;
+  if (!job_id || !user_id) {
+    return res.status(400).json({ success: false, message: "Job ID and User ID are required" });
+  }
+
+  try {
+    // Check if user already applied
+    const existing = await db.query("SELECT * FROM applications WHERE job_id = $1 AND user_id = $2", [job_id, user_id]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ success: false, message: "You have already applied for this job." });
+    }
+
+    await db.query(
+      "INSERT INTO applications (job_id, user_id) VALUES ($1, $2)",
+      [job_id, user_id]
+    );
+    res.status(201).json({ success: true, message: "Applied successfully!" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Error applying for job" });
   }
 });
 

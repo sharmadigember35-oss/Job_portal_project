@@ -58,7 +58,9 @@ function Home() {
                   Admin Panel
                 </button>
               )}
-              <span style={{ marginRight: "15px", color: "white" }}>Hi, {user.email.split("@")[0]}</span>
+              <span style={{ marginRight: "15px", color: "white" }}>
+                Hi, {user.role === "admin" ? "Admin" : user.email.split("@")[0]}
+              </span>
               <button type="button" className="btn-login" onClick={handleLogout}>
                 Logout
               </button>
@@ -119,7 +121,7 @@ function Home() {
       <section id="features" style={{ padding: "80px 20px", textAlign: "center", position: "relative", zIndex: 1 }}>
         <h2 style={{ color: "white", fontSize: "2.5rem", marginBottom: "20px" }}>Job Openings</h2>
         
-        {user && (
+        {user && user.role === "admin" && (
           <button 
             onClick={() => navigate("/post-job")}
             style={{ padding: "12px 24px", borderRadius: "8px", background: "white", color: "black", fontWeight: "bold", border: "none", cursor: "pointer", marginBottom: "40px" }}
@@ -140,7 +142,23 @@ function Home() {
                 <div style={{ padding: "20px" }}>
                   <h3 style={{ color: "white", fontSize: "1.5rem", margin: "0 0 10px 0" }}>{job.title}</h3>
                   <p style={{ color: "rgba(255,255,255,0.7)", fontSize: "0.9rem", marginBottom: "15px" }}>Posted by: {job.author_email}</p>
-                  <p style={{ color: "white", lineHeight: "1.5" }}>{job.description}</p>
+                  <p style={{ color: "white", lineHeight: "1.5", marginBottom: "15px" }}>{job.description}</p>
+                  {user && user.role !== "admin" && (
+                    <button 
+                      onClick={async () => {
+                        try {
+                          const { applyJob } = await import("../api/auth");
+                          await applyJob(job.id, user.id);
+                          alert("Applied successfully!");
+                        } catch (err) {
+                          alert(err.message || "Failed to apply");
+                        }
+                      }}
+                      style={{ padding: "8px 16px", borderRadius: "6px", background: "#4caf50", color: "white", fontWeight: "bold", border: "none", cursor: "pointer", width: "100%" }}
+                    >
+                      Apply for Job
+                    </button>
+                  )}
                 </div>
               </div>
             ))

@@ -13,3 +13,11 @@ Create table jobs(
     image_data text,
     created_at timestamp default current_timestamp
 );
+
+Create table applications(
+    id serial primary key,
+    job_id integer references jobs(id) on delete cascade,
+    user_id integer references users(id) on delete cascade,
+    created_at timestamp default current_timestamp,
+    unique(job_id, user_id)
+);

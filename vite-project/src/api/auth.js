@@ -36,3 +36,7 @@ export async function getJobs() {
   }
   return data;
 }
+
+export function applyJob(job_id, user_id) {
+  return request("/apply", { job_id, user_id });
+}
