@@ -48,6 +48,15 @@ function Home() {
             <a href="#about" className="nav-link">
               About
             </a>
+            {user && user.role !== "admin" && (
+              <span 
+                onClick={() => navigate("/resume-matcher")} 
+                className="nav-link" 
+                style={{ cursor: "pointer", color: "#a5b4fc", fontWeight: "500" }}
+              >
+                Resume Matcher
+              </span>
+            )}
           </div>
         </div>
         <div className="nav-buttons">
@@ -56,6 +65,16 @@ function Home() {
               {user.role === "admin" && (
                 <button type="button" className="btn-secondary" style={{ marginRight: "10px" }} onClick={() => navigate("/admin")}>
                   Admin Panel
+                </button>
+              )}
+              {user.role !== "admin" && (
+                <button 
+                  type="button" 
+                  className="btn-login" 
+                  style={{ marginRight: "10px", borderColor: "rgba(108,99,255,0.4)", color: "#a5b4fc", background: "rgba(108,99,255,0.05)" }} 
+                  onClick={() => navigate("/resume-matcher")}
+                >
+                  ✦ Match Jobs
                 </button>
               )}
               <span style={{ marginRight: "15px", color: "white" }}>

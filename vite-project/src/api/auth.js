@@ -40,3 +40,26 @@ export async function getJobs() {
 export function applyJob(job_id, user_id) {
   return request("/apply", { job_id, user_id });
 }
+
+export function uploadResume(user_id, filename, file_data) {
+  return request("/upload-resume", { user_id, filename, file_data });
+}
+
+export async function getUserResume(user_id) {
+  const response = await fetch(`${API_BASE}/user-resume/${user_id}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || "Failed to fetch user resume");
+  }
+  return data;
+}
+
+export async function getJobMatches(user_id) {
+  const response = await fetch(`${API_BASE}/job-matches/${user_id}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.message || "Failed to fetch job matches");
+  }
+  return data;
+}
+

@@ -21,3 +21,8 @@ Create table applications(
     created_at timestamp default current_timestamp,
     unique(job_id, user_id)
 );
+
+-- Note: The following columns are automatically migrated/added to the 'users' table on backend server startup:
+-- ALTER TABLE users ADD COLUMN resume_text TEXT;
+-- ALTER TABLE users ADD COLUMN resume_skills TEXT; -- Stores JSON array of parsed skills (e.g. ["react", "node.js"])
+-- ALTER TABLE users ADD COLUMN resume_filename VARCHAR(255);
