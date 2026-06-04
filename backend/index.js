@@ -2,13 +2,35 @@ import express from "express";
 import cors from "cors";
 import pg from "pg";
 import { createRequire } from "module";
+import { createServer } from "http";           // NEW
+import { Server } from "socket.io";            // NEW
+import jwt from "jsonwebtoken";                // NEW
 
 const require = createRequire(import.meta.url);
+
+const JWT_SECRET = "your_secret_key"; // use same key everywhere
+
+// ─── verifyToken middleware ───────────────────────────────
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1]; // Bearer <token>
+
+  if (!token) {
+    return res.status(401).json({ error: "No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // decoded has id, email, role
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: "Invalid or expired token" });
+  }
+};
 
 async function parsePdfText(buffer) {
   const pdfModule = require("pdf-parse");
   
-  // 1. If it has the PDFParse constructor (pdf-parse v2+)
   if (pdfModule && pdfModule.PDFParse) {
     const parser = new pdfModule.PDFParse({ data: buffer });
     try {
@@ -19,13 +41,11 @@ async function parsePdfText(buffer) {
     }
   }
   
-  // 2. If the module itself is the parsing function (pdf-parse v1)
   if (typeof pdfModule === "function") {
     const data = await pdfModule(buffer);
     return data.text || "";
   }
   
-  // 3. If the default export is the parsing function (transpiled/CJS default)
   if (pdfModule && typeof pdfModule.default === "function") {
     const data = await pdfModule.default(buffer);
     return data.text || "";
@@ -36,6 +56,27 @@ async function parsePdfText(buffer) {
 
 const app = express();
 const port = 3000;
+
+// ─── HTTP server + socket.io setup ───────────────────────
+const server = createServer(app);             // NEW
+const io = new Server(server, {              // NEW
+  cors: { origin: "*" }
+});
+const activeUsers = new Map();               // NEW
+
+io.on("connection", (socket) => {
+  const userId = socket.handshake.query.userId;
+  if (userId) {
+    activeUsers.set(userId, socket.id);
+    console.log(`User ${userId} connected with socket ${socket.id}`);
+  }
+  socket.on("disconnect", () => {
+    if (userId) {
+      activeUsers.delete(userId);
+      console.log(`User ${userId} disconnected`);
+    }
+  });
+});
 
 const db = new pg.Client({
   user: process.env.PG_USER || "postgres",
@@ -63,8 +104,8 @@ db.connect()
 
 app.use(
   cors({
-    origin: "*", // allow all origins since frontend is on Vercel
-    methods: ["GET", "POST"],
+    origin: "*",
+    methods: ["GET", "POST", "PUT"],         // added PUT
   })
 );
 app.use(express.json({ limit: "10mb" }));
@@ -83,9 +124,7 @@ app.post("/register", async (req, res) => {
   }
 
   try {
-    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const checkResult = await db.query("SELECT * FROM users WHERE email = $1", [email]);
 
     if (checkResult.rows.length > 0) {
       return res.status(409).json({
@@ -94,14 +133,13 @@ app.post("/register", async (req, res) => {
       });
     }
 
-    // Determine role based on email domain safely
     const emailString = String(email || "");
     const role = emailString.endsWith("@admin.com") ? "admin" : "user";
 
     await db.query("INSERT INTO users (email, password, role) VALUES ($1, $2, $3)", [
       email,
       password,
-      role, 
+      role,
     ]);
 
     return res.status(201).json({
@@ -118,8 +156,8 @@ app.post("/register", async (req, res) => {
 });
 
 app.post("/login", async (req, res) => {
-  const email = req.body.username;
-  const password = req.body.password;
+  const email = req.body.username || req.body.email;
+const password = req.body.password;
 
   if (!email || !password) {
     return res.status(400).json({
@@ -129,9 +167,7 @@ app.post("/login", async (req, res) => {
   }
 
   try {
-    const result = await db.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const result = await db.query("SELECT * FROM users WHERE email = $1", [email]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -148,9 +184,17 @@ app.post("/login", async (req, res) => {
       });
     }
 
+    // ─── Generate JWT token on login ─────────────────────
+    const token = jwt.sign(
+      { id: user.id, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     return res.json({
       success: true,
       message: "Login successful.",
+      token,                                  // NEW — send token to frontend
       user: { id: user.id, email: user.email, role: user.role },
     });
   } catch (err) {
@@ -202,8 +246,10 @@ app.post("/apply", async (req, res) => {
   }
 
   try {
-    // Check if user already applied
-    const existing = await db.query("SELECT * FROM applications WHERE job_id = $1 AND user_id = $2", [job_id, user_id]);
+    const existing = await db.query(
+      "SELECT * FROM applications WHERE job_id = $1 AND user_id = $2",
+      [job_id, user_id]
+    );
     if (existing.rows.length > 0) {
       return res.status(409).json({ success: false, message: "You have already applied for this job." });
     }
@@ -220,19 +266,12 @@ app.post("/apply", async (req, res) => {
 });
 
 const SKILLS_LIST = [
-  // Programming Languages
   "javascript", "typescript", "python", "java", "c++", "c#", "php", "ruby", "rust", "go", "swift", "kotlin", "scala", "r", "matlab",
-  // Frontend
   "html", "css", "react", "angular", "vue", "next.js", "nextjs", "nuxt", "svelte", "tailwind", "bootstrap", "sass", "less", "jquery", "flutter", "react native",
-  // Backend & Frameworks
   "node.js", "nodejs", "express", "django", "flask", "fastapi", "spring boot", "springboot", "laravel", "rails", "asp.net", "nest.js", "nestjs",
-  // Databases
   "mongodb", "postgresql", "postgres", "mysql", "sqlite", "redis", "firebase", "cassandra", "mariadb", "oracle", "sql server",
-  // Cloud & DevOps
   "aws", "azure", "gcp", "google cloud", "docker", "kubernetes", "jenkins", "git", "github", "gitlab", "ci/cd", "terraform", "ansible", "nginx",
-  // Data Science & AI
   "machine learning", "deep learning", "nlp", "computer vision", "tensorflow", "pytorch", "keras", "pandas", "numpy", "scikit-learn", "data analysis", "tableau", "power bi",
-  // Business, Design & Others
   "ui/ux", "figma", "photoshop", "illustrator", "agile", "scrum", "project management", "product management", "system design", "rest api", "graphql", "grpc", "microservices", "testing", "jest", "cypress", "selenium"
 ];
 
@@ -250,18 +289,13 @@ function extractSkills(text) {
         const charAfter = idx + skill.length < lowerText.length ? lowerText[idx + skill.length] : " ";
         const isBeforeBound = /[^a-z0-9+#.]/.test(charBefore);
         const isAfterBound = /[^a-z0-9+#.]/.test(charAfter);
-        if (isBeforeBound && isAfterBound) {
-          match = true;
-        }
+        if (isBeforeBound && isAfterBound) match = true;
       }
     } else {
       const regex = new RegExp('\\b' + escaped + '\\b', 'i');
       match = regex.test(lowerText);
     }
-    
-    if (match) {
-      foundSkills.push(skill);
-    }
+    if (match) foundSkills.push(skill);
   }
   return foundSkills;
 }
@@ -276,10 +310,8 @@ app.post("/upload-resume", async (req, res) => {
   try {
     let resumeText = "";
     if (filename.toLowerCase().endsWith(".txt")) {
-      // Decode base64 to plain text
       resumeText = Buffer.from(file_data, "base64").toString("utf-8");
     } else if (filename.toLowerCase().endsWith(".pdf")) {
-      // Decode base64 to buffer and parse PDF
       const pdfBuffer = Buffer.from(file_data, "base64");
       resumeText = await parsePdfText(pdfBuffer);
     } else {
@@ -290,10 +322,8 @@ app.post("/upload-resume", async (req, res) => {
       return res.status(400).json({ success: false, message: "The resume contains no readable text." });
     }
 
-    // Extract skills
     const skills = extractSkills(resumeText);
 
-    // Save to database
     await db.query(
       "UPDATE users SET resume_text = $1, resume_skills = $2, resume_filename = $3 WHERE id = $4",
       [resumeText, JSON.stringify(skills), filename, user_id]
@@ -302,11 +332,7 @@ app.post("/upload-resume", async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Resume processed and saved successfully",
-      resume: {
-        filename,
-        skills,
-        text_length: resumeText.length
-      }
+      resume: { filename, skills, text_length: resumeText.length }
     });
   } catch (err) {
     console.error("Error processing resume:", err);
@@ -350,7 +376,6 @@ app.get("/user-resume/:user_id", async (req, res) => {
 app.get("/job-matches/:user_id", async (req, res) => {
   const { user_id } = req.params;
   try {
-    // 1. Fetch user resume
     const userResult = await db.query(
       "SELECT resume_skills, resume_text FROM users WHERE id = $1",
       [user_id]
@@ -366,23 +391,19 @@ app.get("/job-matches/:user_id", async (req, res) => {
 
     const userSkills = JSON.parse(userRow.resume_skills);
 
-    // 2. Fetch all jobs
     const jobsResult = await db.query(
       "SELECT jobs.*, users.email as author_email FROM jobs JOIN users ON jobs.user_id = users.id ORDER BY jobs.created_at DESC"
     );
     const jobs = jobsResult.rows;
 
-    // 3. Fetch user applied jobs
     const appliedResult = await db.query(
       "SELECT job_id FROM applications WHERE user_id = $1",
       [user_id]
     );
     const appliedJobIds = new Set(appliedResult.rows.map(row => row.job_id));
 
-    // 4. Calculate matches
     const matches = jobs.map(job => {
       const jobSkills = extractSkills(job.title + " " + job.description);
-      
       let matchScore = 0;
       let matchedSkills = [];
       let missingSkills = [];
@@ -392,13 +413,12 @@ app.get("/job-matches/:user_id", async (req, res) => {
         missingSkills = jobSkills.filter(skill => !userSkills.includes(skill));
         matchScore = Math.round((matchedSkills.length / jobSkills.length) * 100);
       } else {
-        // If job has no standard tech skills in description, calculate word boundary similarity
         const jobWords = new Set(
           (job.title + " " + job.description)
             .toLowerCase()
             .replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, "")
             .split(/\s+/)
-            .filter(w => w.length > 3) // filter out small words/stop words
+            .filter(w => w.length > 3)
         );
         const resumeWords = (userRow.resume_text || "")
           .toLowerCase()
@@ -408,10 +428,8 @@ app.get("/job-matches/:user_id", async (req, res) => {
 
         const resumeWordsSet = new Set(resumeWords);
         const overlap = [...jobWords].filter(w => resumeWordsSet.has(w));
-        
-        // Base match score on keyword overlap
         if (jobWords.size > 0) {
-          matchScore = Math.min(Math.round((overlap.length / jobWords.size) * 100), 75); // Cap at 75% for non-exact skills matching
+          matchScore = Math.min(Math.round((overlap.length / jobWords.size) * 100), 75);
         }
       }
 
@@ -425,7 +443,6 @@ app.get("/job-matches/:user_id", async (req, res) => {
       };
     });
 
-    // 5. Sort matches by score desc
     matches.sort((a, b) => b.match_score - a.match_score);
 
     res.json({
@@ -440,6 +457,64 @@ app.get("/job-matches/:user_id", async (req, res) => {
   }
 });
 
-app.listen(port, () => {
+// Toggle Bookmark (Add/Remove)
+app.post("/api/jobs/bookmark/:jobId", verifyToken, async (req, res) => {
+  const userId = req.user.id;
+  const jobId = req.params.jobId;
+
+  try {
+    const checkResult = await db.query(
+      "SELECT * FROM bookmarks WHERE user_id = $1 AND job_id = $2",
+      [userId, jobId]
+    );
+
+    if (checkResult.rows.length > 0) {
+      await db.query(
+        "DELETE FROM bookmarks WHERE user_id = $1 AND job_id = $2",
+        [userId, jobId]
+      );
+      return res.json({ bookmarked: false, message: "Bookmark removed" });
+    } else {
+      await db.query(
+        "INSERT INTO bookmarks (user_id, job_id) VALUES ($1, $2)",
+        [userId, jobId]
+      );
+      return res.json({ bookmarked: true, message: "Job bookmarked successfully" });
+    }
+  } catch (error) {
+    res.status(500).json({ error: "Server error toggling bookmark" });
+  }
+});
+
+// Update application status + emit socket alert
+app.put("/api/applications/:applicationId/status", verifyToken, async (req, res) => {
+  const { status } = req.body;
+  const appId = req.params.applicationId;
+
+  try {
+    // ⚠️ uses user_id not candidate_id (matching your applications table)
+    const updateQuery = "UPDATE applications SET status = $1 WHERE id = $2 RETURNING user_id, job_id";
+    const result = await db.query(updateQuery, [status, appId]);
+    const application = result.rows[0];
+
+    const jobResult = await db.query("SELECT title FROM jobs WHERE id = $1", [application.job_id]);
+    const jobTitle = jobResult.rows[0].title;
+
+    const candidateSocketId = activeUsers.get(application.user_id.toString());
+    if (candidateSocketId) {
+      io.to(candidateSocketId).emit("statusAlert", {
+        message: `Congratulations! Your application status for "${jobTitle}" has been updated to "${status}".`,
+      });
+    }
+
+    res.json({ message: "Status updated successfully", status });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: "Server error updating status" });
+  }
+});
+
+// ─── server.listen instead of app.listen ─────────────────
+server.listen(port, () => {
   console.log(`API server running on http://localhost:${port}`);
 });
